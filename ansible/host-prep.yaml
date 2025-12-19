@@ -1,0 +1,46 @@
+---
+- name: Host preparation
+  hosts: libvirt_hosts
+  become: true
+  gather_facts: true
+
+  vars:
+    host_prep_packages:
+      # virtualization stack
+      - qemu-kvm
+      - libvirt-daemon-system
+      - libvirt-clients
+      - virtinst
+      - apparmor
+      - apparmor-utils
+      - bridge-utils
+      - cloud-image-utils
+
+    host_prep_services:
+      - libvirtd
+      - virtlogd
+      - apparmor
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name: "{{ host_prep_packages }}"
+        state: present
+
+    - name: Ensure services are enabled and started
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop: "{{ host_prep_services }}"
+
+    - name: Sanity check - show service status (quick)
+      ansible.builtin.command: "systemctl is-active {{ item }}"
+      changed_when: false
+      loop: "{{ host_prep_services }}"
+
