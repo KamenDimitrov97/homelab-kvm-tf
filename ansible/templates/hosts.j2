@@ -1,0 +1,6 @@
+127.0.0.1 localhost
+
+{% for h in groups['nodes'] %}
+{{ hostvars[h].ansible_host }} {{ h }}
+{% endfor %}
+

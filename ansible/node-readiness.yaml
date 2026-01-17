@@ -1,0 +1,38 @@
+- name: IPs, basic node readiness
+  hosts: all
+  become: true
+  tasks:
+    - name: Ensure SSH is reachable (sanity)
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        timeout: 20
+      delegate_to: localhost
+      become: false
+
+    - name: Install /etc/hosts from inventory
+      template:
+        src: templates/hosts.j2
+        dest: /etc/hosts
+        mode: "0644"
+
+    - name: Ensure time sync service is enabled
+      service:
+        name: systemd-timesyncd
+        enabled: true
+        state: started
+
+    - name: Assert NTP synchronized
+      command: timedatectl show -p NTPSynchronized --value
+      register: ntp
+      changed_when: false
+      failed_when: ntp.stdout.strip() != "yes"
+
+- name: Node-to-node connectivity check (by hostname)
+  hosts: cp1
+  become: true
+  tasks:
+    - name: Ping all nodes by hostname
+      command: "ping -c 1 -W 1 {{ item }}"
+      loop: "{{ groups['all'] }}"
+      changed_when: false
