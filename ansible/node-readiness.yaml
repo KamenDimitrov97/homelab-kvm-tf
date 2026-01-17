@@ -2,7 +2,7 @@
   hosts: all
   become: true
   tasks:
-    - name: Ensure SSH is reachable (sanity)
+    - name: Ensure SSH is reachable 
       wait_for:
         host: "{{ ansible_host }}"
         port: 22
