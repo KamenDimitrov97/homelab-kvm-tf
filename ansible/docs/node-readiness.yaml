@@ -1,0 +1,92 @@
+# Intro
+
+The whole purpose behind this file is to assert some assumptions of the tf vm creation.
+
+## Assert all vms are reachable on the DHCP reservations we've made (different for every router)
+
+#### Task name: Ensure SSH is reachable
+
+First of all we assert that the DHCP reservations have been processed and picked up.
+All VMs, must be reachable on said IPs. 
+
+The way we do this is we set a timer for `20s` and call each `ansible_host` on port `22` from `localhost`. We don't need super user privileges to  do that so `become: false`.
+```yaml
+    - name: Ensure SSH is reachable (sanity)
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        timeout: 20
+      delegate_to: localhost
+      become: false
+```
+All vars in `inventory.ini` called `ansible_host` are put in a map and this task loops over them all.
+
+#### Task name: Install /etc/hosts from inventory
+
+Then we generate host info using `templates/hosts.j2` which is a file that renders all the hosts + hostnames. 
+This rendered info is then written to `/etc/hosts` which is a local static ip mapping file.
+
+```yaml
+    - name: Install /etc/hosts from inventory
+      template:
+        src: templates/hosts.j2
+        dest: /etc/hosts
+        mode: "0644"
+```
+
+#### Task name: Ensure time sync service is enabled
+
+Then for each host we want to ensure that `systemd-timesyncd` is up and running.
+
+`systemd-timesyncd` syncs all the vms clocks with each other using NTP servers.
+This is essential for `k8s etcd` and how the controllers in k8s work.
+
+```yaml
+    - name: Ensure time sync service is enabled
+      service:
+        name: systemd-timesyncd
+        enabled: true
+        state: started
+```
+
+#### Task name: Ensure NTP is synced
+
+After we've made sure `timesyncd` is up and running, we need to make sure that all the clocks are synced.
+
+```yaml
+    - name: Assert NTP synchronized
+      command: timedatectl show -p NTPSynchronized --value
+      register: ntp
+      changed_when: false
+      failed_when: ntp.stdout.strip() != "yes"   
+```
+Essentially we ensure that the clocks are synced with an NTP server, which does require outbound internet. However is not a security risk.
+
+#### Task name: Node-to-node connectivity check
+
+And lastly we check to make sure that the each `vm` can `ping` the other `vms` by hostname alone.
+
+```yaml
+name: Node-to-node connectivity check      
+hosts: cp1
+become: true
+tasks:
+  - name: Ping all nodes by hostname
+    command: "ping -c 1 -W 1 {{ item }}"
+    loop: "{{ groups['all'] }}"
+    changed_when: false
+```
+
+## Additional Info:
+
+If we've set ssh passwords and so on, here we'll need to write them down for each host.
+That's prone to errors and overall is annoying so we just setup a ssh agent:
+
+```sh
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_rsa
+```
+
+Here we set an agent with the specified ssh key pair and authenticate him. So we don't need to manually write the password for each loop of that task.
+
+
