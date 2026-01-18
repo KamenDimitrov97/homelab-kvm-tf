@@ -1,8 +1,7 @@
 ---
 - name: Host preparation
-  hosts: libvirt_hosts
+  hosts: hypervisor
   become: true
-  gather_facts: true
 
   vars:
     host_prep_packages:
