@@ -1,92 +1,202 @@
-# Intro
+# Node readiness – VM sanity checks
 
-The whole purpose behind this file is to assert some assumptions of the tf vm creation.
+This playbook validates **basic assumptions after Terraform VM creation**.
+It does **not** configure applications or Kubernetes; it only verifies that the
+infrastructure is sane and usable. 🧪
 
-## Assert all vms are reachable on the DHCP reservations we've made (different for every router)
+---
 
-#### Task name: Ensure SSH is reachable
+## Purpose
 
-First of all we assert that the DHCP reservations have been processed and picked up.
-All VMs, must be reachable on said IPs. 
+This playbook asserts that:
 
-The way we do this is we set a timer for `20s` and call each `ansible_host` on port `22` from `localhost`. We don't need super user privileges to  do that so `become: false`.
-```yaml
-    - name: Ensure SSH is reachable (sanity)
-      wait_for:
-        host: "{{ ansible_host }}"
-        port: 22
-        timeout: 20
-      delegate_to: localhost
-      become: false
-```
-All vars in `inventory.ini` called `ansible_host` are put in a map and this task loops over them all.
+- all VMs received their expected DHCP leases
+- SSH is reachable on all nodes
+- hostname resolution is consistent across nodes
+- system clocks are synchronized (required for Kubernetes / etcd)
+- nodes can reach each other by hostname
 
-#### Task name: Install /etc/hosts from inventory
+If this playbook fails, higher‑level automation **must not proceed**.
 
-Then we generate host info using `templates/hosts.j2` which is a file that renders all the hosts + hostnames. 
-This rendered info is then written to `/etc/hosts` which is a local static ip mapping file.
+---
+
+## Play definition
 
 ```yaml
-    - name: Install /etc/hosts from inventory
-      template:
-        src: templates/hosts.j2
-        dest: /etc/hosts
-        mode: "0644"
+- name: IPs, basic node readiness
+  hosts: all
+  become: true
 ```
 
-#### Task name: Ensure time sync service is enabled
+- Runs on **all VMs**
+- Uses superuser privileges because it touches `/etc/hosts` and system services
 
-Then for each host we want to ensure that `systemd-timesyncd` is up and running.
+---
 
-`systemd-timesyncd` syncs all the vms clocks with each other using NTP servers.
-This is essential for `k8s etcd` and how the controllers in k8s work.
+## Task: Ensure SSH is reachable
 
 ```yaml
-    - name: Ensure time sync service is enabled
-      service:
-        name: systemd-timesyncd
-        enabled: true
-        state: started
+- name: Ensure SSH is reachable
+  wait_for:
+    host: "{{ ansible_host }}"
+    port: 22
+    timeout: 20
+  delegate_to: localhost
+  become: false
 ```
 
-#### Task name: Ensure NTP is synced
+### What this does
 
-After we've made sure `timesyncd` is up and running, we need to make sure that all the clocks are synced.
+- For each VM, waits up to **20 seconds** for TCP port **22** to be reachable
+- Uses `ansible_host` from `inventory.ini`
+- Runs from **localhost**, not from another VM
+
+### Why this exists
+
+- Ensures DHCP reservations were applied correctly
+- Ensures networking is up before proceeding
+- Fails fast if a VM is unreachable
+
+---
+
+## Task: Install `/etc/hosts` from inventory
 
 ```yaml
-    - name: Assert NTP synchronized
-      command: timedatectl show -p NTPSynchronized --value
-      register: ntp
-      changed_when: false
-      failed_when: ntp.stdout.strip() != "yes"   
+- name: Install /etc/hosts from inventory
+  template:
+    src: templates/hosts.j2
+    dest: /etc/hosts
+    mode: "0644"
 ```
-Essentially we ensure that the clocks are synced with an NTP server, which does require outbound internet. However is not a security risk.
 
-#### Task name: Node-to-node connectivity check
+### What this does
 
-And lastly we check to make sure that the each `vm` can `ping` the other `vms` by hostname alone.
+- Renders a hosts file using `templates/hosts.j2`
+- Populates `/etc/hosts` with **all VMs and hostnames**
+- Ensures consistent name resolution without relying on external DNS
+
+### Why this exists
+
+- Kubernetes components rely heavily on hostname resolution
+- Avoids subtle DNS issues during early cluster bootstrapping
+- Makes node‑to‑node checks deterministic
+
+---
+
+## Task: Ensure time sync service is enabled
 
 ```yaml
-name: Node-to-node connectivity check      
-hosts: cp1
-become: true
-tasks:
-  - name: Ping all nodes by hostname
-    command: "ping -c 1 -W 1 {{ item }}"
-    loop: "{{ groups['all'] }}"
-    changed_when: false
+- name: Ensure time sync service is enabled
+  service:
+    name: systemd-timesyncd
+    enabled: true
+    state: started
 ```
 
-## Additional Info:
+### What this does
 
-If we've set ssh passwords and so on, here we'll need to write them down for each host.
-That's prone to errors and overall is annoying so we just setup a ssh agent:
+- Enables and starts `systemd-timesyncd`
+- Ensures the service survives reboots
 
-```sh
+### Why this exists
+
+- Clock drift breaks **etcd**, TLS, and controller coordination
+- Kubernetes assumes reasonably synchronized clocks
+- NTP is infrastructure hygiene, not an application concern ⏱️
+
+---
+
+## Task: Assert NTP synchronized
+
+```yaml
+- name: Assert NTP synchronized
+  command: timedatectl show -p NTPSynchronized --value
+  register: ntp
+  changed_when: false
+  failed_when: ntp.stdout.strip() != "yes"
+```
+
+### What this does
+
+- Queries the system clock sync status
+- Fails the play if the node is **not synchronized**
+
+### Why this exists
+
+- Ensures time sync is not just running, but **effective**
+- Requires outbound internet access
+- Prevents subtle distributed‑system failures later
+
+---
+
+## Node‑to‑node connectivity check
+
+```yaml
+- name: Node-to-node connectivity check (by hostname)
+  hosts: cp1
+  become: true
+```
+
+This play runs only on **cp1** and validates **east‑west connectivity**.
+
+---
+
+### Task: Ping all nodes by hostname
+
+```yaml
+- name: Ping all nodes by hostname
+  command: "ping -c 1 -W 1 {{ item }}"
+  loop: "{{ groups['all'] }}"
+  changed_when: false
+```
+
+### What this does
+
+- From `cp1`, pings every node by **hostname only**
+- Validates:
+  - `/etc/hosts` correctness
+  - basic L3 connectivity
+  - ICMP reachability between nodes
+
+### Why this exists
+
+- Confirms the cluster network is internally consistent
+- Avoids surprises when Kubernetes components start talking to each other 🔗
+
+---
+
+## SSH authentication note
+
+During these checks, Ansible may open many SSH connections.
+Typing passwords repeatedly is error‑prone and annoying.
+
+Recommended setup:
+
+```bash
 eval "$(ssh-agent -s)"
 ssh-add ~/.ssh/id_rsa
 ```
 
-Here we set an agent with the specified ssh key pair and authenticate him. So we don't need to manually write the password for each loop of that task.
+This:
+- starts an SSH agent
+- loads your private key once
+- allows Ansible to authenticate non‑interactively
 
+This keeps the playbook clean and repeatable.
+
+---
+
+## Summary
+
+This playbook:
+
+- validates DHCP and basic reachability
+- enforces consistent hostname resolution
+- ensures time synchronization
+- confirms node‑to‑node connectivity
+
+It is intentionally **strict** and **pre‑flight oriented**.
+
+If this fails:
+> the infrastructure is not ready — and higher layers should not run 🚫
 
