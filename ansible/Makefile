@@ -6,7 +6,7 @@ WHITE  := $(shell tput -Txterm setaf 7)
 CYAN   := $(shell tput -Txterm setaf 6)
 RESET  := $(shell tput -Txterm sgr0)
 
-.PHONY: help check inventory ping facts host-prep host-prep-dry node-readiness lint ssh-agent
+.PHONY: help check inventory ping facts_identity facts_network facts_resources facts_storage_mounts facts_storage_devices host-prep host-prep-dry node-readiness lint ssh-agent
 
 check: ## Check if tool requirements are met
 	@command -v ansible-playbook >/dev/null || (echo "Missing: ansible-playbook ❌" && exit 1)
@@ -31,8 +31,11 @@ facts_network: ## Get facts about network configurations
 facts_resources: ## Get facts about resources available to hosts
 	@ansible nodes -m setup -a 'filter=ansible_processor_vcpus,ansible_memtotal_mb,ansible_memfree_mb,ansible_swaptotal_mb'
 
-facts_storage: ## Get facts about storage devices and mounts
-	@ansible nodes -m setup -a 'filter=ansible_devices,ansible_mounts'
+facts_storage_mounts: ## Get facts about storage mounts
+	@ansible nodes -m setup -a 'filter=ansible_mounts'
+
+facts_storage_devices: ## Get facts about storage devices
+	@ansible nodes -m setup -a 'filter=ansible_devices'
 
 host-prep: ## Main playbook which prepares the host, requires ansible
 	@ansible-playbook host-prep.yaml
