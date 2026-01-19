@@ -1,69 +1,205 @@
-# Intro
+# Host preparation – libvirt hypervisor
 
-The whole purpose of this file is to make sure the KVM stack is installed, started and it's services are successfully running on the host machine.
-As stated, we are preparing the host machine. Libvirt_hosts include only the local host.
+This playbook prepares the **hypervisor host**. The machine that will host all of the virtual machines.
+
+It is responsible for:
+- installing the virtualization stack
+- enabling required services
+- configuring host networking which includes bridge `br0`
+
+This playbook is intentionally **host-only**.  
+It does **not** create VMs and does **not** configure anything inside VMs.
+
+---
+
+## Play definition
 
 ```yaml
 - name: Host preparation
   hosts: hypervisor
-  become: true # use sudo
+  become: true
+  gather_facts: true
 ```
 
-## Variables
-Here've added the packages required. The whole vm stack and the services that run from these packages for further use.
-```yaml
-  vars:
-    host_prep_packages:
-      # virtualization stack
-      - qemu-kvm
-      - libvirt-daemon-system
-      - libvirt-clients
-      - virtinst
-      - apparmor
-      - apparmor-utils
-      - bridge-utils
-      - cloud-image-utils
+- `hosts: hypervisor`  
+  Targets hosts added under inventory.ini [hypervisor], which is the localhost.
 
-    host_prep_services:
-      - libvirtd
-      - virtlogd
-      - apparmor
-``` 
+- `become: true`  
+  All tasks require root privileges (package install, services, `/etc/netplan`).
+
+- `gather_facts: true`  
+  Gathers host information.
+
+---
+
+## Variables
+
+These variables define **what packages get installed** and **what services should be running**.
+
+```yaml
+vars:
+  host_prep_packages:
+    # virtualization stack
+    - qemu-kvm
+    - libvirt-daemon-system
+    - libvirt-clients
+    - virtinst
+    - apparmor
+    - apparmor-utils
+    - bridge-utils
+    - cloud-image-utils
+
+  host_prep_services:
+    - libvirtd
+    - virtlogd
+    - apparmor
+```
 
 ## Tasks
 
-Most are self-explanitory.
+### Update apt cache
 
-In this task we update the apt packages metadata. Equivalent to `sudo apt-get update`
 ```yaml
 - name: Update apt cache
-  ansible.builtin.apt:        # use the ansible APT module
-    update_cache: true        # run `sudo apt-get update`
-    cache_valid_time: 3600    # if cache is older than 1h
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600 # 1h
 ```
 
-In this task we install the required packages which were in [host_prep_packages](#variables) list.
+Equivalent to:
+
+```bash
+sudo apt-get update
+```
+
+- Refreshes package metadata
+
+---
+
+### Install required packages
+
 ```yaml
 - name: Install required packages
-  ansible.builtin.apt:                    # use the ansible APT module
-    name: "{{ host_prep_packages }}"      # loop through all packages in host_prep_packages
-    state: present                        # package must be present, if not install it
+  ansible.builtin.apt:
+    name: "{{ host_prep_packages }}"
+    state: present
 ```
 
-In this task we ensure that the [host_prep_services](#variables) that come from the kvm stack are enabled and started.
+- Installs everything listed in `host_prep_packages`
+- Idempotent: packages already installed are skipped
+
+---
+
+### Ensure services are enabled and started
+
 ```yaml
 - name: Ensure services are enabled and started
-  ansible.builtin.systemd:                  # use the ansible APT module
-    name: "{{ item }}"                      # specific service name e.g. libvirtd
-    enabled: true                           # must be enabled, if not enable it 
-    state: started                          # state must be started, if not start it
-  loop: "{{ host_prep_services }}"          # loop through all services in host_prep_services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: "{{ host_prep_services }}"
 ```
 
-TThis task makes sure they're running successfully.
+For each service in `host_prep_services`:
+- ensures it starts on boot
+- ensures it is currently running
+
+This avoids relying on implicit package defaults.
+
+---
+
+### Sanity check – service status
+
 ```yaml
-- name: show service status
+- name: Sanity check - show service status (quick)
   ansible.builtin.command: "systemctl is-active {{ item }}"
   changed_when: false
   loop: "{{ host_prep_services }}"
 ```
+
+- Verifies that each service is actually active
+- Useful for troubleshooting
+
+---
+
+## Network safety check
+
+Before touching host networking, we validate that the uplink NIC exists.
+This is why we need `gather_facts: true`. 
+```yaml
+- name: Assert uplink NIC exists
+  ansible.builtin.assert:
+    that:
+      - bridge_uplink_nic in ansible_facts.interfaces
+    fail_msg: "NIC {{ bridge_uplink_nic }} not found on host"
+```
+
+### Why this exists
+
+- Enslaving the wrong NIC into a bridge can **cut off networking**
+- If this playbook is run remotely, that would lock you out
+
+---
+
+## Netplan bridge configuration
+
+### Installing the netplan configuration
+
+```yaml
+- name: Install br0 netplan
+  ansible.builtin.template:
+    src: 01-br0.yaml.j2
+    dest: /etc/netplan/01-br0.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: netplan apply
+```
+
+What this does:
+- Renders the Netplan configuration from a Jinja2 template
+- Writes it to `/etc/netplan/01-br0.yaml`
+- Does **not** apply the change immediately
+
+The task **notifies a handler** only if the file content actually changes.
+
+---
+
+## Handler: applying the network change
+
+```yaml
+handlers:
+  - name: netplan apply
+    ansible.builtin.command: netplan apply
+```
+
+### What a handler is
+
+A handler:
+- runs only if notified
+- runs once, even if notified multiple times
+- runs at the end of the play
+
+In this case, networking is only applied **if the config changed**.
+
+---
+
+### Why `netplan apply` is used
+
+`netplan apply`:
+- applies the new network configuration
+
+I was contemplating using netplan try --timeout, but that has requirements I'm not aware of.
+
+---
+
+## Summary
+
+This playbook:
+- prepares the hypervisor host in a repeatable way
+- installs and validates the kvm irtualization stack
+- configures host networking safely
+- separates **rendering configuration** from **applying changes**
+
+It is intentionally conservative and explicit, because **breaking the hypervisor breaks everything.**
