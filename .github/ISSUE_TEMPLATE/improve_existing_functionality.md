@@ -1,10 +1,12 @@
 ---
-name: "🛠 Improvement proposal"
-about: "Improve an existing feature"
-title: "🛠 Title"
-labels: ["enhancement"]
-assignees: ['']
+name: "\U0001F6E0 Improvement proposal"
+about: Improve an existing feature
+title: "\U0001F6E0 Title"
+labels: enhancement
+assignees: ''
+
 ---
+
 ### Improvement Proposal
 
 Describe the improvement you would like to see. Be clear and concise.

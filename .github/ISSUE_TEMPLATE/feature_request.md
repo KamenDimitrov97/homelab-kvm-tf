@@ -1,9 +1,10 @@
 ---
 name: "✨ Feature request"
-about: "Suggest an idea for this project"
+about: Suggest an idea for this project
 title: "✨ Title"
-labels: ["feat request"]
-assignees: ['']
+labels: ''
+assignees: ''
+
 ---
 
 ### Is your feature request related to a problem?

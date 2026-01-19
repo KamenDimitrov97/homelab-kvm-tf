@@ -1,10 +1,12 @@
 ---
-name: "🐛 Bug report"
-about: "Report a bug to help us improve"
-title: "🐛 Title"
-labels: ["bug"]
-assignees: ['']
+name: "\U0001F41B Bug report"
+about: Report a bug to help us improve
+title: "\U0001F41B Title"
+labels: bug
+assignees: ''
+
 ---
+
 ### Issue Summary
 
 Briefly describe the issue you are experiencing.
