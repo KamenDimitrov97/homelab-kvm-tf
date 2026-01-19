@@ -1,194 +1,122 @@
-# Phase 4 — Shared Storage Setup (NFS)
+# Phase 4 — Shared Storage Setup (NFS) (Declarative)
 
 ## Purpose of this phase
 
-The goal of **Phase 4** is to introduce **cluster-level shared storage** in a way that:
-
-- storage can be used by kubernetes,
-- keeps infrastructure concerns separated from application data,
-- stays simple enough to reason about and debug,
-- does not block future improvements.
+Set up **shared storage** for your Kubernetes workers using **NFS on `storage1`**, tf and ansible.
 
 ---
 
-## Design principles
+## Key design decisions (and why)
 
-### 1. Separation of concerns
-
-We intentionally separate storage into **three layers**:
+### 1) Storage separation model
 
 | Layer | What it stores | Why |
-|----|----|----|
+|---|---|---|
 | Host storage | ISOs, VM images, Terraform/Ansible artifacts, backups | Infra lifecycle ≠ app lifecycle |
-| `storage1` (NFS) | Application data (future PV/PVC) | Cluster-scoped, RWX capable |
-| VM root disks | OS + kube components | Disposable, node-specific |
-
-**Why this matters**  
-Kubernetes workloads must not depend on the hypervisor. If the host changes, apps should survive. This mirrors real-world cluster design.
+| `storage1` (NFS) | App data for Kubernetes (future PV/PVC) | Cluster-scoped shared storage (RWX) |
+| VM root disks | OS + Kubernetes components | Node-specific, disposable |
 
 ---
 
-### 2. Why NFS (for now)
+### 2) Why NFS now (RWX)
 
-Kubernetes storage access modes:
-- **RWO** – ReadWriteOnce (single node)
-- **RWX** – ReadWriteMany (multiple nodes)
+Kubernetes access modes:
+- **RWO** — one node
+- **RWX** — many nodes at once
 
-Most real applications need **RWX** (shared uploads, media, artifacts, etc.).
+NFS provides **RWX** with minimal complexity and good learning value.
 
-**NFS provides RWX natively** with:
-- minimal setup,
-- predictable behavior,
-- excellent learning value.
-
-start with NFS, evolve later.
+**Deliberate choice:** keep it simple now; evolve to Longhorn/Ceph to handle high availability(HA).
 
 ---
 
-### 3. Failure model (explicitly accepted)
+### 3) Failure model: accepted SPOF for now
 
-`storage1` is a **single point of failure**.
+`storage1` is a **single point of failure** (not HA). If it goes down, NFS-backed workloads are impacted.
 
-If it goes down:
-- pods block on I/O,
-- volumes become unavailable.
+**Why we accept this in Phase 4**
+- HA storage is its own project
+- You want a working cluster first
+- Clean architecture beats early complexity
 
-This is **acceptable at this stage**.
-
-**Why**:
-- HA storage is a project of its own,
-- it should not block cluster bootstrapping,
-- design cleanliness matters more than HA right now.
-
-Mitigations (future phases):
-- backups to host storage,
-- snapshots,
-- migration to distributed storage.
+Mitigation later: backups + eventual HA storage.
 
 ---
 
-## Phase tasks
+### 4) Control planes do not mount NFS
+
+Only **workers** mount the NFS share.
+
+**Why**
+- Keeps control planes minimal and easier to debug
+- Most app workloads live on workers
+
+---
+
+### 5) Security: `root_squash`
+
+Use `root_squash` so “root on a client” is not “root on the NFS server”.
+
+**Why**
+- Prevents pods (or nodes) acting as root from owning server files
+- Safer defaults for Kubernetes-style workloads
+- Easier to get right now than later
+
+---
+
+## Declarative ownership: Terraform vs Ansible
+
+### Terraform owns infrastructure objects
+
+- Create `storage1` VM (cpu/ram/network/hostname)
+- Attach the 200GB disk as `/dev/vdb`
+- manage DNS/DHCP reservations
+
+---
+
+### Ansible owns OS + service state
+
+- Partition/format `/dev/vdb`
+- Ensure filesystem is **ext4**
+- Mount at `/srv/nfs` and persist in `/etc/fstab`
+- Install and configure `nfs-kernel-server`
+- Manage `/etc/exports`
+- Validate mounts + read/write tests from workers
+
+---
+
+## “Ensure ext4” policy
+
+Your policy: **always ensure ext4 on `/dev/vdb`.**
+
+Implementation behavior should be:
+
+- ✅ If `/dev/vdb` is blank/unformatted → format ext4
+- ✅ If `/dev/vdb` is already ext4 → do nothing
+- ❌ If `/dev/vdb` is formatted but NOT ext4 → **fail hard**
+
+---
+
+## Inputs we already know (facts)
+
+- `storage1` has an unused disk: **`/dev/vdb` (200G)**
+- Workers can reach `storage1` by hostname: **DNS resolution works**
+- Firewall (UFW) status is unknown (common to be inactive on Ubuntu)
+
+---
+
+## Architecture overview
 
 ```
-Phase 4
-├── A. Prepare storage1 disk
-├── B. Configure NFS server
-├── C. Validate from workers
-├── D. (Optional) Host infra NFS
-└── E. Prepare for Kubernetes usage
+Host (hypervisor): infra-only storage
+  /srv/infra  (optional export for ISOs/backups/artifacts)
+
+storage1: cluster shared storage (NFS)
+  /dev/vdb -> /srv/nfs
+           -> /srv/nfs/rwx  (exported)
+
+Workers: consume NFS
+  w1, w2 mount storage1:/srv/nfs/rwx for validation (and later k8s)
 ```
 
 ---
-
-## A. Prepare `storage1` disk
-
-### Context
-
-`storage1` has a dedicated **200GB disk** (`/dev/vdb`) that is currently unused.
-
-### Tasks
-
-1. Partition `/dev/vdb`
-2. Format as `ext4`
-3. Mount at `/srv/nfs`
-4. Persist mount in `/etc/fstab`
-
-### Directory structure
-
-```
-/srv/nfs
-├── rwx        # Kubernetes RWX volumes
-├── backups    # optional
-└── shared     # optional
-```
-
-Only `/srv/nfs/rwx` will be exported to Kubernetes.
-
----
-
-## B. Configure NFS server (`storage1`)
-
-### Packages
-
-- `nfs-kernel-server`
-
-### Export scope
-
-Only export what is needed:
-
-```
-/srv/nfs/rwx
-```
-
-### Access model
-
-- **Clients**: workers only (`w1`, `w2`)
-- **Auth**: hostname-based (DNS already works)
-- **Security**: `root_squash` enabled
-
-### Why `root_squash`
-
-- root inside pods maps to an unprivileged user,
-- permissions stay controlled on the server.
-- this prevents security and cleanup problems.
-- a pod running as root could own files on the server,
-
----
-
-## C. Worker-side validation (critical step)
-
-Before Kubernetes ever touches this storage, it must work at the OS level.
-
-### Tasks (on a worker)
-
-1. Mount `storage1:/srv/nfs/rwx` at `/mnt/nfs-test`
-2. Create files
-3. Write data
-4. Delete data
-5. Unmount and remount
-
-### Success criteria
-
-- No permission errors
-- Files persist across remounts
-- Same data visible from another worker
-
-**Why this matters**  
-If NFS fails here, Kubernetes will fail later — but with worse error messages and more layers involved.
-
----
-
-## D. Host infra NFS
-
-### Purpose
-
-- ISOs
-- VM images
-- Terraform / Ansible artifacts
-- Backups
-
-### Rules
-
-- Never mounted inside pods
-- Never used for PV/PVC
-- Separate export path (e.g. `/srv/infra`)
-
----
-
-## Completion checklist
-
-- [ ] `/dev/vdb` formatted and mounted on `storage1`
-- [ ] `/srv/nfs/rwx` exported via NFS
-- [ ] Workers can mount and write
-- [ ] Control planes untouched
-- [ ] Host infra storage remains separate
-
----
-
-## Outcome
-
-We now have a **clean, realistic storage foundation**:
-
-- easy to reason about,
-- safe to evolve.
-
