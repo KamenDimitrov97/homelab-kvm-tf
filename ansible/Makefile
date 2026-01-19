@@ -22,8 +22,17 @@ inventory: ## Get a graph of the ansible inventory
 ping: ## Ping all vms
 	@ansible all -m ping
 
-facts: ## Get some facts for all hosts
-	@ansible all -m ansible.builtin.setup -a "filter=ansible_hostname,ansible_fqdn,ansible_distribution,ansible_distribution_version,ansible_kernel,ansible_architecture,ansible_default_ipv4,ansible_interfaces,ansible_all_ipv4_addresses,ansible_all_ipv6_addresses,ansible_processor_vcpus,ansible_memtotal_mb,ansible_memfree_mb,ansible_swaptotal_mb,ansible_virtualization_role,ansible_virtualization_type" 
+facts_identity: ## Get facts about basic identity of the hosts
+	@ansible nodes -m setup -a 'filter=ansible_hostname,ansible_fqdn,ansible_distribution*,ansible_kernel,ansible_architecture,ansible_virtualization_*'
+
+facts_network: ## Get facts about network configurations
+	@ansible nodes -m setup -a 'filter=ansible_default_ipv4,ansible_interfaces,ansible_all_ipv4_addresses,ansible_all_ipv6_addresses'
+
+facts_resources: ## Get facts about resources available to hosts
+	@ansible nodes -m setup -a 'filter=ansible_processor_vcpus,ansible_memtotal_mb,ansible_memfree_mb,ansible_swaptotal_mb'
+
+facts_storage: ## Get facts about storage devices and mounts
+	@ansible nodes -m setup -a 'filter=ansible_devices,ansible_mounts'
 
 host-prep: ## Main playbook which prepares the host, requires ansible
 	@ansible-playbook host-prep.yaml
