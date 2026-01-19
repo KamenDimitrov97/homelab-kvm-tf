@@ -2,6 +2,7 @@
 - name: Host preparation
   hosts: hypervisor
   become: true
+  gather_facts: true
 
   vars:
     host_prep_packages:
@@ -43,3 +44,21 @@
       changed_when: false
       loop: "{{ host_prep_services }}"
 
+    - name: Assert uplink NIC exists
+      ansible.builtin.assert:
+        that:
+          - bridge_uplink_nic in ansible_facts.interfaces
+        fail_msg: "NIC {{ bridge_uplink_nic }} not found on host"
+
+    - name: Install br0 netplan
+      ansible.builtin.template:
+        src: 01-br0.yaml.j2
+        dest: /etc/netplan/01-br0.yaml
+        owner: root
+        group: root
+        mode: "0644"
+      notify: netplan apply
+
+  handlers:
+    - name: netplan apply
+      ansible.builtin.command: netplan apply

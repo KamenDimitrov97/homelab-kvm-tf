@@ -1,0 +1,16 @@
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {{ bridge_uplink_nic }}:
+      dhcp4: no
+  bridges:
+    br0:
+      interfaces: [{{ bridge_uplink_nic }}]
+      dhcp4: yes
+      dhcp4-overrides:
+        route-metric: 100
+      parameters:
+        stp: false
+        forward-delay: 0
+
