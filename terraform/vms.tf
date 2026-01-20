@@ -10,6 +10,13 @@ resource "libvirt_volume" "ubuntu_base" {
   }
 }
 
+resource "libvirt_volume" "storage1_nfs" {
+  name     = "storage1-nfs.qcow2"
+  pool     = "vmpool"
+  format   = "qcow2"
+  capacity = 200 * local.gib
+}
+
 resource "libvirt_volume" "root" {
   for_each = local.nodes
   name     = "${each.key}-root.qcow2"
@@ -39,7 +46,7 @@ resource "libvirt_domain" "vm" {
   memory = each.value.ram_mb
   vcpu   = each.value.vcpu
   type   = "kvm"
-  
+
   os = {
     type         = "hvm"
     type_arch    = "x86_64"
@@ -61,36 +68,52 @@ resource "libvirt_domain" "vm" {
     ]
 
     # Disks: root + data + cloud-init cdrom
-    disks = [
-      {
-        device = "disk"
-        target = { dev = "vda", bus = "virtio" }
-        driver = { name = "qemu", type = "qcow2" }
-        source = {
-          pool   = "vmpool"
-          volume = libvirt_volume.root[each.key].name
+    disks = concat(
+      [
+        {
+          device = "disk"
+          target = { dev = "vda", bus = "virtio" }
+          driver = { name = "qemu", type = "qcow2" }
+          source = {
+            pool   = "vmpool"
+            volume = libvirt_volume.root[each.key].name
+          }
+        },
+        {
+          device = "disk"
+          target = { dev = "vdb", bus = "virtio" }
+          driver = { name = "qemu", type = "qcow2" }
+          source = {
+            pool   = "vmpool"
+            volume = libvirt_volume.data[each.key].name
+          }
         }
-      },
-      {
-        device = "disk"
-        target = { dev = "vdb", bus = "virtio" }
-        driver = { name = "qemu", type = "qcow2" }
-        source = {
-          pool   = "vmpool"
-          volume = libvirt_volume.data[each.key].name
+      ],
+      each.key == "storage1" ? [
+        {
+          device = "disk"
+          target = { dev = "vdc", bus = "virtio" }
+          driver = { name = "qemu", type = "qcow2" }
+          source = {
+            pool   = "vmpool"
+            volume = libvirt_volume.storage1_nfs.name
+          }
         }
-      },
-      {
-        device    = "cdrom"
-        read_only = true
-        target    = { dev = "sda", bus = "sata" }
-        driver    = { name = "qemu", type = "raw" }
-        source = {
-          pool   = "vmpool"
-          volume = libvirt_volume.seed[each.key].name
+      ] : [],
+      [
+        {
+          device    = "cdrom"
+          read_only = true
+          target    = { dev = "sda", bus = "sata" }
+          driver    = { name = "qemu", type = "raw" }
+          source = {
+            pool   = "vmpool"
+            volume = libvirt_volume.seed[each.key].name
+          }
         }
-      }
-    ]
+      ]
+    )
+
   }
 }
 

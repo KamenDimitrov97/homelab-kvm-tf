@@ -8,7 +8,7 @@ locals {
     w1  = { vcpu = 2, ram_mb = 6144, root_gb = 30, data_gb = 100, mac = "52:54:00:00:00:21" }
     w2  = { vcpu = 2, ram_mb = 6144, root_gb = 30, data_gb = 100, mac = "52:54:00:00:00:22" }
 
-    storage1 = { vcpu = 1, ram_mb = 2048, root_gb = 20, data_gb = 200, mac = "52:54:00:00:00:31" }
+    storage1 = { vcpu = 1, ram_mb = 2048, root_gb = 20, data_gb = 30, mac = "52:54:00:00:00:31" }
   }
 
   ssh_keys = split("\n", trimspace(file("${path.module}/ssh/authorized_keys.pub")))
