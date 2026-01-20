@@ -9,7 +9,28 @@ RESET  := $(shell tput -Txterm sgr0)
 VMS := cp1 cp2 cp3 storage1 w1 w2
 STOP_VMS := w2 w1 storage1 cp3 cp2 cp1
 
-.PHONY: up down reboot status help
+.PHONY: init plan apply destroy up down reboot status ssh help
+ssh: ## Explain ssh connectivity to vms
+	@echo 'In order to connect to one of the vms via ssh'
+	@echo 'I recommend to use eval "$(ssh-agent -s)".'
+	@echo ''
+	@echo 'After recreation of vms you might receive an err msg'
+	@echo 'regarding a "REMOTE HOST IDENTIFICATION HAS CHANGED!"'
+	@echo ''
+	@echo 'Host identity has changes due to recreation of the said vm'
+	@echo 'in order to fix: "ssh-keygen -f ~/.ssh/known_hosts -R <vm-hostname>"'
+
+init: ## Runs terraform init
+	@terraform init 
+
+plan: ## Runs terraform plan
+	@terraform plan
+
+apply: ## Runs terraform apply
+	@terraform apply
+
+destroy: ## Runs terraform destroy
+	terraform destroy
 
 list: ## list all vms
 	@virsh list --all
