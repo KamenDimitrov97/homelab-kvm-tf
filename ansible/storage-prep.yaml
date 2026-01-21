@@ -1,9 +1,9 @@
-- name: Storage Preparation
+- name: Storage Preparation                                                                                                                               
   hosts: storage
   become: true
   gather_facts: true
 
-  tasks: 
+  tasks:
     - name: Gather hardware facts
       ansible.builtin.setup:
         gather_subset:
@@ -16,3 +16,29 @@
           - "'vdb' in ansible_facts.devices"
           - "'vdc' in ansible_facts.devices"
         fail_msg: "One or more storage disks are missing"
+
+    - name: Detect filesystem signature on /dev/vdc
+      ansible.builtin.command: "blkid -o value -s TYPE /dev/vdc"
+      register: vdc_blkid
+      changed_when: false
+      failed_when: false
+
+    - name: Set vdc_fs with disk format
+      ansible.builtin.set_fact:
+        vdc_fs: "{{ vdc_blkid.stdout | default('') | trim }}"
+
+    - name: Format /dev/vdc as ext4
+      ansible.builtin.filesystem:
+        fstype: ext4
+        dev: /dev/vdc
+      when: vdc_fs != 'ext4'
+
+    - name: Fail if filesystem is unsupported
+      ansible.builtin.fail:
+        msg: "/dev/vdc has unsupported filesystem: {{ vdc_fs }}"
+      when:
+        - vdc_fs != 'ext4'
+
+    - debug:
+        msg: "vdc_fs='{{ vdc_fs }}' rc={{ vdc_blkid.rc }}"
+
