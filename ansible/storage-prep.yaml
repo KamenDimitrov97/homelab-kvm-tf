@@ -48,7 +48,7 @@
       changed_when: false
 
     - debug:
-        msg: "UUID of disk vdc_uuid='{{ vdc_uuid.stdout }}'"
+        msg: "UUID of disk vdc_uuid='{{ vdc_uuid }}'"
 
     - name: Create mountpoint /srv/nfs
       ansible.builtin.file:
@@ -65,4 +65,16 @@
         fstype: ext4
         opts: defaults
         state: mounted
+
+    - name: Read /etc/fstab
+      ansible.builtin.slurp:
+        src: /etc/fstab
+      register: fstab_raw
+
+    - name: Assert UUID exists in /etc/fstab
+      ansible.builtin.assert:
+        that:
+          - "vdc_uuid.stdout in (fstab_raw.content | b64decode)"
+        fail_msg: "UUID {{ vdc_uuid.stdout }} not found in /etc/fstab"
+
 
