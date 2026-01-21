@@ -1,0 +1,18 @@
+- name: Storage Preparation
+  hosts: storage
+  become: true
+  gather_facts: true
+
+  tasks: 
+    - name: Gather hardware facts
+      ansible.builtin.setup:
+        gather_subset:
+          - hardware
+
+    - name: Assert storage disks exist
+      ansible.builtin.assert:
+        that:
+          - "'vda' in ansible_facts.devices"
+          - "'vdb' in ansible_facts.devices"
+          - "'vdc' in ansible_facts.devices"
+        fail_msg: "One or more storage disks are missing"
