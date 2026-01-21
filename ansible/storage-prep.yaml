@@ -42,3 +42,27 @@
     - debug:
         msg: "vdc_fs='{{ vdc_fs }}' rc={{ vdc_blkid.rc }}"
 
+    - name: Get UUID of /dev/vdc
+      ansible.builtin.command: blkid -o value -s UUID /dev/vdc
+      register: vdc_uuid
+      changed_when: false
+
+    - debug:
+        msg: "UUID of disk vdc_uuid='{{ vdc_uuid.stdout }}'"
+
+    - name: Create mountpoint /srv/nfs
+      ansible.builtin.file:
+        path: /srv/nfs
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Mount /dev/vdc at /srv/nfs via UUID
+      ansible.builtin.mount:
+        path: /srv/nfs
+        src: "UUID={{ vdc_uuid.stdout }}"
+        fstype: ext4
+        opts: defaults
+        state: mounted
+
